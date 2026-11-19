@@ -114,6 +114,11 @@ test set of new speakers yet. Peak normalisation matters: without it, recall on 
 The model is the breath detector of the KTH svtx toolkit (`svtx breath`), used there to put breath tokens into Swedish TTS training
 data.
 
+## Report
+
+[docs/REPORT.md](docs/REPORT.md): related work with references, the training data, the detector's listening rounds and
+results, the lung model and its fit on ten corpora, profiles and calibration, and the limitations.
+
 ## Licence
 
 Non-commercial research use only (see `LICENSE`). Please cite this repository. Questions: Joakim Gustafson, KTH Speech, Music and
