@@ -32,6 +32,36 @@ for b in det.detect_file("interview.wav", words, channel=0):
     print(b["s"], b["e"], b["label"], b["cls"], b["p"])
 ```
 
+## The lung model: where a speaker breathes in a text
+
+`kipp.lung` plans breaths for speech synthesis: given a text and a voice, where the speaker breathes, how much air each breath takes,
+and its breath-token class. It is the planner of the KTH breathing-TTS demo, ported to Python (the same plan as the page for the same
+settings: identical on 336 test cases).
+
+```bash
+kipp-plan "Först skär du löken. Sedan steker du den i smör, och sen häller du i grädden." --voice v15
+# [Ssoft] Först skär du löken. [Msoft] Sedan steker du den i smör, ...
+```
+
+```python
+from kipp.lung import plan, simulate, voice_params, to_text, VOICES
+P = voice_params("v15", place="phrase")      # 18 measured voices (VOICES) or voice_params(None); every setting can be overridden
+words = plan("[låg] Det var en gång ... [hög] Plötsligt hörde hon ett ljud!", P)
+print(to_text(words)); sim = simulate(words, P)   # estimated word and breath times and the lung-volume curve
+```
+
+- **The model:** a lung volume in litres, drained by every word (syllables / speech rate × 0.11 l per second of voiced phonation;
+  voiceless sounds cost more; scaled by vocal effort) and refilled by breaths. A breath may come before the text, after a sentence
+  end or other punctuation, before a conjunction, filler or cue word (`place="phrase"`, the default; `"punct"` or `"any"` otherwise), and
+  always where an effort marker (`[låg]`, `[mellan]`, `[hög]`) changes the effort. It is taken when the stretch to the next possible
+  breath would go below the lowest volume, or at a sentence end when the next sentence would, and sized to what follows.
+- **Classes:** the same breath tokens the detector gives: S / M / L by inhale time, soft / loud by effort, flow and size, and
+  `silent` for a small refill at a comma or phrase boundary when the voice breathes audibly in under half of its pauses.
+- **Voices:** 18 profiles measured with the detector on Swedish corpora (podcast, remote-call and face-to-face dialogue, radio
+  interviews and monologue, parliament speech, a cooking show, book readings, audiobooks): speech rate, share of pauses with an audible
+  breath, median breath length and level, and voiced seconds per breath group. They set the defaults, as the demo's sliders do:
+  vital capacity by gender (4.8 / 3.6 l), the highest volume from one breath group's air, the inhale flow from the breath length.
+
 ## How it works
 
 - **Where it looks:** only in pauses, from the speaker's word times: every gap of 0.25–3 s between two words, and for longer gaps the
