@@ -62,6 +62,27 @@ print(to_text(words)); sim = simulate(words, P)   # estimated word and breath ti
   breath, median breath length and level, and voiced seconds per breath group. They set the defaults, as the demo's sliders do:
   vital capacity by gender (4.8 / 3.6 l), the highest volume from one breath group's air, the inhale flow from the breath length.
 
+## Try it in the browser: your own breathing
+
+```bash
+kipp-demo                       # http://localhost:8766 (everything runs on your machine)
+```
+
+Three tabs:
+1. **Breaths in a recording.** Record yourself or load a file (optionally with a word file). The page draws the spectrogram with each
+   breath as a box coloured by its class, lists the breaths, and measures your **breathing profile**: speech rate, the share of pauses
+   with an audible in-breath, breath length and level, voiced seconds per breath group, and from these, by the lung model's rules, the air
+   per breath group, your inhale speed and the highest volume. While you record, the profile updates every 5 s.
+2. **Calibrate.** Breathe out, press Start, take your deepest breath, and talk for as long as you can on it; breathe and press Stop. The
+   voiced seconds on that one breath give the most air you use on a breath (in the model's units), which sets the model's lung capacity
+   for your voice, and the deep breath's length your full-effort inhale speed. Model values for the planner, not a lung-function test.
+3. **Plan breaths for a text.** Type a text, choose one of the measured voices or **your voice** (from tabs 1–2), and see where you
+   would breathe, each breath's class, and the lung volume over the text.
+
+From Python: `kipp.profile.estimate(x, breaths, words)` and `kipp.profile.calibrate(x, breaths)`. Without word times, pauses come from
+voicing and syllables from loudness peaks (de Jong & Wempe, 2009): estimates that work best with one voice on a close microphone and 30 s
+or more of speech; the page shows how many breaths and pauses each number rests on. Edited podcasts often have their breaths removed.
+
 ## How it works
 
 - **Where it looks:** only in pauses, from the speaker's word times: every gap of 0.25–3 s between two words, and for longer gaps the

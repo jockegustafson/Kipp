@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kipp"
-version = "1.1.0"
+version = "1.2.0"
 description = "Kipp: breaths in Swedish speech (detector) and where a speaker breathes in a text (lung model)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -16,9 +16,10 @@ vad = ["silero-vad"]
 [project.scripts]
 kipp = "kipp.cli:main"
 kipp-plan = "kipp.lung:main"
+kipp-demo = "kipp.demo:main"
 
 [tool.setuptools]
 packages = ["kipp"]
 
 [tool.setuptools.package-data]
-kipp = ["weights/*.npz", "weights/*.json"]
+kipp = ["weights/*.npz", "weights/*.json", "demo.html"]
