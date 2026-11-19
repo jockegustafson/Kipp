@@ -40,7 +40,7 @@ settings: identical on 336 test cases).
 
 ```bash
 kipp-plan "Först skär du löken. Sedan steker du den i smör, och sen häller du i grädden." --voice v15
-# [Ssoft] Först skär du löken. [Msoft] Sedan steker du den i smör, ...
+# [Ssoft] Först skär du löken. [Ssoft] Sedan steker du den i smör, [Msoft] och sen häller du i grädden.
 ```
 
 ```python
