@@ -18,6 +18,7 @@ from .profile import calibrate, estimate, speech_from_voicing, voicing
 
 MAX_S = 300.0; SR = 16000
 DET = None; LOCK = threading.Lock()
+DUMP = os.environ.get("KIPP_CALIB_DUMP")                          # a folder: keep each calibration recording there (local debugging)
 
 
 def to16k(y, sr):
@@ -70,11 +71,18 @@ def calib(req):
     if sp:
         with LOCK:
             pre = DET.detect_window(y, sp[0][0] - 4.0, sp[0][0] + 0.2); post = DET.detect_window(y, sp[-1][1] - 0.2, sp[-1][1] + 4.0)
-        extra = [b for b in (pre, post) if b and not any(abs(b["s"] - o["s"]) < 0.2 for o in br)]
-        if extra:
-            from .model import classify
-            br = classify(y, sorted(br + extra, key=lambda b: b["s"]), [(s, e, "") for s, e in sp])
-    return {"dur": len(y) / SR, "spec": spectrogram(y), "breaths": br, "calibration": calibrate(y, br, req.get("gender", "m"))}
+        for w in (pre, post):                                       # the window's in-breath replaces a detection of the same breath
+            if w: br = [o for o in br if not (o["s"] < w["e"] and w["s"] < o["e"])] + [w]
+        from .model import classify
+        br = classify(y, sorted(br, key=lambda b: b["s"]), [(s, e, "") for s, e in sp])
+    cal = calibrate(y, br, req.get("gender", "m"))
+    cal["debug"] = {"speech": [[round(s, 2), round(e, 2)] for s, e in sp[:3]] + ([["...", round(sp[-1][1], 2)]] if len(sp) > 3 else []),
+                    "pre": pre if sp else None, "post": post if sp else None, "breaths": [[b["s"], b["e"], b["label"]] for b in br]}
+    if DUMP:                                                        # the recording and the answer, to check a calibration that failed
+        import json, soundfile as sf, time
+        os.makedirs(DUMP, exist_ok=True); stem = os.path.join(DUMP, time.strftime("calib_%H%M%S"))
+        sf.write(stem + ".wav", y, SR); json.dump(cal, open(stem + ".json", "w"), indent=1, default=float)
+    return {"dur": len(y) / SR, "spec": spectrogram(y), "breaths": br, "calibration": cal}
 
 
 def make_plan(req):

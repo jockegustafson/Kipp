@@ -105,7 +105,8 @@ def calibrate(x, breaths, gender="m"):
     the end); breaths: Kipp detections of it (detect with speech=None -> words from voicing)
     -> {"max_voiced_s", "max_air_l", "deep_breath_s", "vc", "flow_max", "ok", "note"}"""
     voiced, db = voicing(x); t = (np.arange(len(voiced)) + 0.5) * FR
-    ins = sorted((b for b in breaths if b["label"] == "in"), key=lambda b: b["s"])
+    ins = sorted((b for b in breaths if b["label"] != "out"), key=lambda b: b["s"])   # in a calibration every breath is an in-breath
+                                                                                     # (one the detector calls disfluent too, 2026-11-19)
     sp = [s for s in speech_from_voicing(voiced) if s[1] - s[0] >= 0.15]; first_voice = sp[0][0] if sp else None
     deep = next((b for b in reversed(ins) if first_voice is None or b["e"] <= first_voice + 0.3), None)   # the last breath before speech
     start = deep["e"] if deep else (first_voice or 0.0)
