@@ -67,6 +67,30 @@ class BreathDetector:
                 out.append({"s": round(t0 + v["s"], 3), "e": round(t0 + v["e"], 3), "label": v["label"], "p": v["p"], "pause": kind})
         return classify(x, out, words)
 
+    def detect_window(self, x, t0, t1, thr=None):
+        """the strongest in-breath in [t0, t1] (s), searched directly (not only in pauses between words): threshold `thr` (default the
+        model's), then 0.3; None if there is none. For recordings where a breath is known to be there (calibration)."""
+        t0, t1 = max(0.0, t0), min(len(x) / SR, t1); c = x[int(t0 * SR):int(t1 * SR)]
+        if len(c) < SR * 0.3: return None
+        c = (c / max(1e-4, float(np.abs(c).max())) * 0.9).astype(np.float32); P = self.probs(c)
+        for th in (self.thr if thr is None else thr, 0.3):
+            ev = [v for v in events(P, 0.0, t1 - t0, th) if v["label"] == "in"]
+            if ev:
+                v = max(ev, key=lambda v: (v["e"] - v["s"]) * v["p"])
+                return {"s": round(t0 + v["s"], 3), "e": round(t0 + v["e"], 3), "label": "in", "p": v["p"], "pause": "window", "found_at": th}
+        # last resort: the longest unvoiced stretch at least 12 dB above the window's quietest tenth (a breath is unvoiced noise)
+        from .profile import voicing
+        vo, db = voicing(c); loud = (~vo) & (db > np.percentile(db, 10) + 12); best, i = None, 0
+        while i < len(loud):
+            if not loud[i]: i += 1; continue
+            j = i
+            while j + 1 < len(loud) and (loud[j + 1] or (j + 2 < len(loud) and loud[j + 2])): j += 1
+            if (j - i + 1) * 0.01 >= 0.2 and (best is None or j - i > best[1] - best[0]): best = (i, j)
+            i = j + 1
+        if best:
+            return {"s": round(t0 + best[0] * 0.01, 3), "e": round(t0 + (best[1] + 1) * 0.01, 3), "label": "in", "p": None, "pause": "window", "found_at": "energy"}
+        return None
+
     def detect_file(self, path, words=None, channel=None, thr=None, keep_out=False):
         """path: any audio soundfile reads; words: [(word, start, end)] of the speaker on `channel`, or None for Silero VAD"""
         x = load_audio(path, channel)

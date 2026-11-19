@@ -106,8 +106,8 @@ def calibrate(x, breaths, gender="m"):
     -> {"max_voiced_s", "max_air_l", "deep_breath_s", "vc", "flow_max", "ok", "note"}"""
     voiced, db = voicing(x); t = (np.arange(len(voiced)) + 0.5) * FR
     ins = sorted((b for b in breaths if b["label"] == "in"), key=lambda b: b["s"])
-    first_voice = float(t[voiced][0]) if voiced.any() else None
-    deep = next((b for b in ins if first_voice is None or b["e"] <= first_voice + 0.3), None)
+    sp = [s for s in speech_from_voicing(voiced) if s[1] - s[0] >= 0.15]; first_voice = sp[0][0] if sp else None
+    deep = next((b for b in reversed(ins) if first_voice is None or b["e"] <= first_voice + 0.3), None)   # the last breath before speech
     start = deep["e"] if deep else (first_voice or 0.0)
     nxt = next((b for b in ins if b["s"] > start + 1.0), None); end = nxt["s"] if nxt else len(x) / SR
     m = (t >= start) & (t < end); vs = float(voiced[m].sum() * FR)

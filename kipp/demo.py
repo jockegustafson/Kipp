@@ -63,7 +63,17 @@ def analyze(req):
 
 
 def calib(req):
-    y = to16k(np.frombuffer(base64.b64decode(req["pcm"]), np.float32), req.get("sr", SR)); br, _ = detect(y, None)
+    """the deep breath is searched directly in the 4 s before the first speech and the final breath in the 4 s after the last (the pause
+    search alone only looks between two stretches of speech, 2026-11-19); inside the speech, the pauses as usual"""
+    y = to16k(np.frombuffer(base64.b64decode(req["pcm"]), np.float32), req.get("sr", SR)); br, used = detect(y, None)
+    sp = [(s, e) for s, e, _ in used[1:] if e - s >= 0.15]
+    if sp:
+        with LOCK:
+            pre = DET.detect_window(y, sp[0][0] - 4.0, sp[0][0] + 0.2); post = DET.detect_window(y, sp[-1][1] - 0.2, sp[-1][1] + 4.0)
+        extra = [b for b in (pre, post) if b and not any(abs(b["s"] - o["s"]) < 0.2 for o in br)]
+        if extra:
+            from .model import classify
+            br = classify(y, sorted(br + extra, key=lambda b: b["s"]), [(s, e, "") for s, e in sp])
     return {"dur": len(y) / SR, "spec": spectrogram(y), "breaths": br, "calibration": calibrate(y, br, req.get("gender", "m"))}
 
 
