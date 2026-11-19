@@ -18,6 +18,7 @@ button.rec{background:#dc2626;color:#fff}.file input{display:none}.ghost{backgro
 label{color:var(--muted);display:flex;align-items:center;gap:6px}select,textarea,input[type=text]{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px;font:inherit}
 .status{color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
 .view{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;overflow-x:auto}canvas{display:block;width:100%}
+main>*{min-width:0}.sv{padding:10px 0}.sv canvas{position:sticky;left:0;width:auto}.sv .spacer{height:1px}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 10px}.card span{display:block;color:var(--muted);font-size:12px}.card b{font-size:17px;font-variant-numeric:tabular-nums}
 .legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:12.5px}.sw{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-2px;margin-right:5px}
@@ -39,7 +40,7 @@ table{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
     <span class="status" id="statusA">Record yourself (the profile updates every 5 s) or load a file.</span>
   </div>
   <audio id="playerA" controls></audio>
-  <div class="view"><canvas id="cvA" data-h="300"></canvas></div>
+  <div class="view sv" id="svA"><canvas id="cvA" data-h="300"></canvas><div class="spacer"></div></div>
   <div class="legend"><span><i class="sw" style="background:var(--bS)"></i>S (&lt; 0.30 s)</span><span><i class="sw" style="background:var(--bM)"></i>M</span>
     <span><i class="sw" style="background:var(--bL)"></i>L (&gt; 0.55 s)</span><span><i class="sw" style="background:var(--bD)"></i>disfluent</span><span>pale = soft, full = loud · click to play</span></div>
   <div class="cards" id="profA"></div>
@@ -57,7 +58,7 @@ table{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
   <div class="bar"><button id="recB" class="rec">● Start</button><label>voice <select id="genderB"><option value="m">male</option><option value="f">female</option></select></label>
     <span class="status" id="statusB">Calibration measures the most air you use on one breath.</span></div>
   <audio id="playerB" controls></audio>
-  <div class="view"><canvas id="cvB" data-h="220"></canvas></div>
+  <div class="view sv" id="svB"><canvas id="cvB" data-h="220"></canvas><div class="spacer"></div></div>
   <div class="cards" id="calB"></div>
   <p class="note">The voiced seconds on the one breath, times 0.11 l/s (the lung model's air per second of voicing), are the most air you use on a breath
     in the model's units. That air is taken to span 20–90 % of the vital capacity, which sets the model's capacity for your voice; the deep
@@ -85,7 +86,7 @@ let MY = null, CAL = null, VOICES = {};
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
   for (const t of "ABC") $("tab" + t).hidden = b.dataset.tab !== t;
-  if (b.dataset.tab === "C") fillVoices();
+  if (b.dataset.tab === "C") fillVoices(); else (b.dataset.tab === "A" ? VA : VB).later();
 });
 // ---- audio helpers
 function b64(f32) { const u = new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
@@ -97,10 +98,10 @@ function wavBlob(x, sr) { const b = new ArrayBuffer(44 + x.length * 2), v = new 
 async function decodeFile(f) { const ctx = new (window.AudioContext || window.webkitAudioContext)(); const ab = await ctx.decodeAudioData(await f.arrayBuffer()); ctx.close();
   const n = ab.length, x = new Float32Array(n); for (let c = 0; c < ab.numberOfChannels; c++) { const d = ab.getChannelData(c); for (let i = 0; i < n; i++) x[i] += d[i] / ab.numberOfChannels; } return { x, sr: ab.sampleRate }; }
 class Recorder {   // raw samples from the microphone (no echo cancellation or noise suppression), with a callback every `every` s
-  async start(every, onTick) { this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  async start(every, onTick, onChunk) { this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
     this.ctx = new (window.AudioContext || window.webkitAudioContext)(); this.sr = this.ctx.sampleRate; this.chunks = [];
     const src = this.ctx.createMediaStreamSource(this.stream); this.node = this.ctx.createScriptProcessor(4096, 1, 1);
-    this.node.onaudioprocess = e => this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); src.connect(this.node); this.node.connect(this.ctx.destination);
+    this.node.onaudioprocess = e => { const c = new Float32Array(e.inputBuffer.getChannelData(0)); this.chunks.push(c); if (onChunk) onChunk(c); }; src.connect(this.node); this.node.connect(this.ctx.destination);
     if (every) this.timer = setInterval(() => onTick(concat(this.chunks), this.sr), every * 1000); }
   stop() { clearInterval(this.timer); this.node.disconnect(); this.stream.getTracks().forEach(t => t.stop()); this.ctx.close(); return { x: concat(this.chunks), sr: this.sr }; }
 }
@@ -109,28 +110,72 @@ async function post(path, body) { const r = await fetch(path, { method: "POST", 
 // ---- drawing a spectrogram with breath boxes
 function magma(v) { const s = [[0,0,4],[40,11,84],[101,21,110],[159,42,99],[212,72,66],[245,125,21],[250,193,39],[252,255,164]]; const x = v * 7, i = Math.min(6, Math.floor(x)), f = x - i; return s[i].map((c, k) => c + (s[i + 1][k] - c) * f); }
 function bcol(c) { return c === "disfl" ? css("--bD") : c[0] === "S" ? css("--bS") : c[0] === "L" ? css("--bL") : css("--bM"); }
-function drawSpec(cv, R, player) {
-  const W = Math.max(cv.parentElement.clientWidth - 20, 300), H = +cv.dataset.h, dpr = window.devicePixelRatio || 1;   // data-h: the attribute height changes with dpr
-  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px"; const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
-  if (!R) return; const L = 44, PW = W - L - 8, SH = H - 46, X = t => L + t / R.dur * PW, sp = R.spec;
-  const raw = Uint8Array.from(atob(sp.data), c => c.charCodeAt(0)), img = g.createImageData(sp.frames, sp.bins);
-  for (let f = 0; f < sp.frames; f++) for (let b = 0; b < sp.bins; b++) { const [r, gg, bb] = magma(raw[f * sp.bins + b] / 255), o = ((sp.bins - 1 - b) * sp.frames + f) * 4; img.data[o] = r; img.data[o + 1] = gg; img.data[o + 2] = bb; img.data[o + 3] = 255; }
-  const tmp = document.createElement("canvas"); tmp.width = sp.frames; tmp.height = sp.bins; tmp.getContext("2d").putImageData(img, 0, 0); g.drawImage(tmp, L, 0, PW, SH);
-  for (const b of R.breaths) { g.globalAlpha = b.cls && b.cls.endsWith("soft") ? 0.45 : 0.85; g.fillStyle = bcol(b.cls || "M"); g.fillRect(X(b.s), SH + 4, Math.max(2, X(b.e) - X(b.s)), 18);
-    g.globalAlpha = 0.25; g.fillRect(X(b.s), 0, Math.max(2, X(b.e) - X(b.s)), SH); g.globalAlpha = 1; }
-  g.fillStyle = css("--muted"); g.font = "11px sans-serif"; g.textAlign = "right";
-  for (const k of [0, 4, 8]) g.fillText(k + " kHz", L - 4, Math.min(Math.max(SH - k / 8 * SH + 4, 10), SH));
-  const step = R.dur > 120 ? 20 : R.dur > 60 ? 10 : R.dur > 20 ? 5 : 1; g.textAlign = "center";
-  for (let t = 0; t <= R.dur; t += step) g.fillText(t + " s", X(t), H - 2);
-  if (player && player.currentTime > 0) { g.strokeStyle = css("--fg"); g.beginPath(); g.moveTo(X(player.currentTime), 0); g.lineTo(X(player.currentTime), SH + 22); g.stroke(); }
-  cv.onclick = e => { const r = cv.getBoundingClientRect(), t = (e.clientX - r.left - L) / (r.width - L - 8) * R.dur; if (player && t >= 0 && t <= R.dur) { player.currentTime = t; player.play(); } };
+// WaveSurfer-style view: a fixed zoom (PXS px per second, one 10 ms frame per px), the spectrogram computed here from the samples so it grows
+// while recording with the newest audio at the right edge; afterwards the whole recording at the same zoom, scrollable to the side
+const PXS = 100, HOP_S = 0.01, ROWS = 128, FMAX = 8000, TILE = 1024;
+function fftMag(re, im) {   // in-place radix-2 FFT; returns nothing, re/im hold the spectrum
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) { let b = n >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+  for (let len = 2; len <= n; len <<= 1) { const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a);
+    for (let i = 0; i < n; i += len) { let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) { const p = i + k, q = p + len / 2, tr = re[q] * cr - im[q] * ci, ti = re[q] * ci + im[q] * cr;
+        re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti; const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr; } } } }
+class SpecView {
+  constructor(id, player) { this.sv = $("sv" + id); this.cv = $("cv" + id); this.sp = this.sv.querySelector(".spacer"); this.player = player; this.H = +this.cv.dataset.h; this.L = 44;
+    this.reset(16000); this.sv.addEventListener("scroll", () => this.later());
+    this.cv.onclick = e => { const t = (e.clientX - this.cv.getBoundingClientRect().left - this.L + this.sv.scrollLeft) / PXS;
+      if (this.player.src && t >= 0 && t <= this.dur) { this.player.currentTime = t; this.player.play(); } };
+    player.addEventListener("play", () => { const loop = () => { this.follow(); this.draw(); if (!player.paused) requestAnimationFrame(loop); }; loop(); });
+    player.addEventListener("seeked", () => this.draw()); }
+  reset(sr) { this.sr = sr; this.hop = Math.round(HOP_S * sr); this.win = Math.round(0.032 * sr); this.nfft = 1 << Math.ceil(Math.log2(this.win));
+    this.w = Float32Array.from({ length: this.win }, (_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (this.win - 1)));
+    this.rows = Array.from({ length: ROWS + 1 }, (_, r) => Math.min(this.nfft / 2, Math.round(r / ROWS * FMAX / sr * this.nfft)));
+    this.db = []; this.top = -Infinity; this.drawnTop = -Infinity; this.tiles = []; this.drawnTo = 0; this.tail = new Float32Array(0); this.dur = 0; this.breaths = []; this.live = false; this.later(); }
+  feed(x) {   // append samples: frames every 10 ms of a 32 ms Hann window, 0-8 kHz in ROWS rows (max over the FFT bins of each row)
+    const b = new Float32Array(this.tail.length + x.length); b.set(this.tail); b.set(x, this.tail.length); let o = 0;
+    const re = new Float32Array(this.nfft), im = new Float32Array(this.nfft);
+    for (; o + this.win <= b.length; o += this.hop) { re.fill(0); im.fill(0); for (let i = 0; i < this.win; i++) re[i] = b[o + i] * this.w[i]; fftMag(re, im);
+      const d = new Float32Array(ROWS);
+      for (let r = 0; r < ROWS; r++) { let m = 0; for (let k = this.rows[r]; k <= Math.max(this.rows[r], this.rows[r + 1] - 1); k++) m = Math.max(m, re[k] * re[k] + im[k] * im[k]);
+        d[r] = 10 * Math.log10(m + 1e-12); if (d[r] > this.top) this.top = d[r]; }
+      this.db.push(d); }
+    this.tail = b.slice(o); this.dur = this.db.length * HOP_S; this.later(); }
+  setAudio(x, sr) { this.reset(sr); this.feed(x); }
+  setBreaths(br) { this.breaths = br || []; this.later(); }
+  render() {  // colour the frames into TILE-wide canvases (all again when the loudest level so far rose by more than 3 dB)
+    if (this.top > this.drawnTop + 3) { this.drawnTop = this.top; this.drawnTo = 0; }
+    const lo = this.drawnTop - 80;
+    while (this.drawnTo < this.db.length) { const ti = Math.floor(this.drawnTo / TILE), a = this.drawnTo, z = Math.min(this.db.length, (ti + 1) * TILE);
+      if (!this.tiles[ti]) { const c = document.createElement("canvas"); c.width = TILE; c.height = ROWS; this.tiles[ti] = c; }
+      const img = new ImageData(z - a, ROWS);
+      for (let f = a; f < z; f++) for (let r = 0; r < ROWS; r++) { const v = Math.min(1, Math.max(0, (this.db[f][r] - lo) / 80)), [R, G, B] = magma(v), q = ((ROWS - 1 - r) * (z - a) + f - a) * 4;
+        img.data[q] = R; img.data[q + 1] = G; img.data[q + 2] = B; img.data[q + 3] = 255; }
+      this.tiles[ti].getContext("2d").putImageData(img, a - ti * TILE, 0); this.drawnTo = z; } }
+  later() { if (!this.queued) { this.queued = true; requestAnimationFrame(() => { this.queued = false; this.draw(); }); } }
+  follow() { const t = this.player.currentTime, W = this.sv.clientWidth, x = this.L + t * PXS - this.sv.scrollLeft;   // keep the play cursor in view
+    if (x > W - 40 || x < this.L) this.sv.scrollLeft = Math.max(0, t * PXS - (W - this.L) * 0.1); }
+  draw() {
+    const W = Math.max(this.sv.clientWidth, 300), H = this.H, dpr = window.devicePixelRatio || 1, L = this.L, SH = H - 46, cv = this.cv;
+    this.sp.style.width = Math.ceil(L + this.dur * PXS + 12) + "px";
+    if (this.live) this.sv.scrollLeft = this.sv.scrollWidth;          // recording: the newest audio at the right edge
+    const sl = this.sv.scrollLeft, X = t => L + t * PXS - sl;
+    cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+    this.render(); g.save(); g.beginPath(); g.rect(L, 0, W - L, H); g.clip(); g.imageSmoothingEnabled = true;
+    this.tiles.forEach((c, i) => { const x0 = X(i * TILE * HOP_S); if (x0 < W && x0 + TILE * HOP_S * PXS > L) g.drawImage(c, x0, 0, TILE * HOP_S * PXS, SH); });
+    for (const b of this.breaths) { g.globalAlpha = b.cls && b.cls.endsWith("soft") ? 0.45 : 0.85; g.fillStyle = bcol(b.cls || "M"); g.fillRect(X(b.s), SH + 4, Math.max(2, (b.e - b.s) * PXS), 18);
+      g.globalAlpha = 0.25; g.fillRect(X(b.s), 0, Math.max(2, (b.e - b.s) * PXS), SH); g.globalAlpha = 1; }
+    g.fillStyle = css("--muted"); g.strokeStyle = css("--line"); g.font = "11px sans-serif"; g.textAlign = "center";
+    for (let t = Math.max(0, Math.floor(sl / PXS)); t <= this.dur + 1e-6 && X(t) < W + 20; t++) { if (t && X(t) < L + 14) continue; g.textAlign = t ? "center" : "left"; g.fillText(t + " s", t ? X(t) : X(t) + 1, H - 2); g.beginPath(); g.moveTo(X(t), SH + 24); g.lineTo(X(t), SH + 30); g.stroke(); }
+    if (this.player.src && this.player.currentTime > 0 && !this.live) { g.strokeStyle = css("--fg"); g.beginPath(); g.moveTo(X(this.player.currentTime), 0); g.lineTo(X(this.player.currentTime), SH + 22); g.stroke(); }
+    g.restore(); g.fillStyle = css("--muted"); g.textAlign = "right";
+    for (const k of [0, 4, 8]) g.fillText(k + " kHz", L - 4, Math.min(Math.max(SH - k / 8 * SH + 4, 10), SH)); }
 }
 const card = (k, v) => `<div class="card"><span>${k}</span><b>${v}</b></div>`;
 const f = (v, d, u) => v === null || v === undefined ? "–" : (+v).toFixed(d) + (u || "");
 // ---- tab A: breaths and profile
-let RA = null, wordsA = null, recA = null;
+let RA = null, wordsA = null, recA = null; const VA = new SpecView("A", $("playerA"));
 function showA(j, live) {
-  RA = j; drawSpec($("cvA"), RA, $("playerA")); const p = j.profile, P = j.params, n = j.n; MY = p;
+  RA = j; VA.setBreaths(j.breaths); const p = j.profile, P = j.params, n = j.n; MY = p;
   $("profA").innerHTML = card("speech rate", f(p.syll_per_s, 2, " syll/s")) + card("pauses with an audible breath", p.breath_rate === null ? "–" : Math.round(p.breath_rate * 100) + " %") +
     card("in-breath, median", f(p.breath_s, 2, " s")) + card("breath level re speech", f(p.breath_db, 1, " dB")) + card("voiced s per breath group", f(p.group_phon, 2, " s")) +
     card("breath group, clock time", f(p.group_s, 1, " s")) + card("air per breath group (model)", f(j.air_per_group_l, 2, " l")) + card("inhale speed (model)", f(P.flow, 2, " l/s")) +
@@ -141,29 +186,28 @@ function showA(j, live) {
 }
 async function analyzeA(x, sr, live) { try { showA(await post("/analyze", { pcm: b64(x), sr, words: wordsA, gender: $("genderA").value }), live); } catch (e) { $("statusA").textContent = "Error: " + e.message; } }
 $("recA").onclick = async () => {
-  if (recA) { const { x, sr } = recA.stop(); recA = null; $("recA").textContent = "● Record"; $("playerA").src = URL.createObjectURL(wavBlob(x, sr)); $("statusA").textContent = "Analysing …"; analyzeA(x, sr, false); return; }
+  if (recA) { const { x, sr } = recA.stop(); recA = null; VA.live = false; VA.later(); $("recA").textContent = "● Record"; $("playerA").src = URL.createObjectURL(wavBlob(x, sr)); $("statusA").textContent = "Analysing …"; analyzeA(x, sr, false); return; }
   recA = new Recorder(); let busy = false;
-  try { await recA.start(5, async (x, sr) => { if (busy || x.length < sr * 3) return; busy = true; await analyzeA(x, sr, true); busy = false; }); }
+  try { await recA.start(5, async (x, sr) => { if (busy || x.length < sr * 3) return; busy = true; await analyzeA(x, sr, true); busy = false; }, c => VA.feed(c));
+    VA.reset(recA.sr); VA.live = true; $("playerA").removeAttribute("src"); }
   catch (e) { recA = null; $("statusA").textContent = "No microphone access (open the page as http://localhost and allow the microphone)."; return; }
   $("recA").textContent = "■ Stop"; $("statusA").textContent = "Recording … speak normally; the profile updates every 5 s";
 };
 $("fileA").onchange = async e => { const fl = e.target.files[0]; if (!fl) return; $("playerA").src = URL.createObjectURL(fl); $("statusA").textContent = "Decoding and analysing …";
-  try { const { x, sr } = await decodeFile(fl); analyzeA(x, sr, false); } catch (er) { $("statusA").textContent = "The browser could not decode this file."; } };
+  try { const { x, sr } = await decodeFile(fl); VA.setAudio(x, sr); VA.sv.scrollLeft = 0; analyzeA(x, sr, false); } catch (er) { $("statusA").textContent = "The browser could not decode this file."; } };
 $("wordsA").onchange = async e => { const fl = e.target.files[0]; wordsA = fl ? await fl.text() : null; $("statusA").textContent = fl ? `Words: ${fl.name} (used from the next analysis)` : ""; };
-$("playerA").addEventListener("timeupdate", () => drawSpec($("cvA"), RA, $("playerA")));
 // ---- tab B: calibration
-let recB = null, RB = null;
+let recB = null, RB = null; const VB = new SpecView("B", $("playerB"));
 $("recB").onclick = async () => {
-  if (recB) { const { x, sr } = recB.stop(); recB = null; $("recB").textContent = "● Start"; $("playerB").src = URL.createObjectURL(wavBlob(x, sr)); $("statusB").textContent = "Measuring …";
-    try { RB = await post("/calibrate", { pcm: b64(x), sr, gender: $("genderB").value }); drawSpec($("cvB"), RB, $("playerB")); const c = RB.calibration; CAL = c.ok ? c : null;
+  if (recB) { const { x, sr } = recB.stop(); recB = null; VB.live = false; VB.later(); $("recB").textContent = "● Start"; $("playerB").src = URL.createObjectURL(wavBlob(x, sr)); $("statusB").textContent = "Measuring …";
+    try { RB = await post("/calibrate", { pcm: b64(x), sr, gender: $("genderB").value }); VB.setBreaths(RB.breaths); const c = RB.calibration; CAL = c.ok ? c : null;
       $("calB").innerHTML = card("voiced speech on one breath", f(c.max_voiced_s, 1, " s")) + card("air on one breath (model)", f(c.max_air_l, 2, " l")) + card("deep in-breath", f(c.deep_breath_s, 2, " s")) +
         card("vital capacity (model)", f(c.vc, 1, " l")) + card("full-effort inhale speed", f(c.flow_max, 2, " l/s"));
       $("statusB").textContent = c.ok ? "Calibrated: used for “Your voice” in tab 3." : "Not usable: " + c.note; } catch (e) { $("statusB").textContent = "Error: " + e.message; } return; }
   recB = new Recorder();
-  try { await recB.start(0); } catch (e) { recB = null; $("statusB").textContent = "No microphone access."; return; }
+  try { await recB.start(0, null, c => VB.feed(c)); VB.reset(recB.sr); VB.live = true; $("playerB").removeAttribute("src"); } catch (e) { recB = null; $("statusB").textContent = "No microphone access."; return; }
   $("recB").textContent = "■ Stop"; $("statusB").textContent = "Deep breath now … then talk as long as you can";
 };
-$("playerB").addEventListener("timeupdate", () => drawSpec($("cvB"), RB, $("playerB")));
 // ---- tab C: planning
 async function fillVoices() {
   if (!Object.keys(VOICES).length) VOICES = await (await fetch("/voices")).json();
@@ -194,5 +238,5 @@ function drawLung(j) {
   s += `<text x="4" y="${Y(P.top * VC) + 4}" font-size="11" fill="${css("--top")}">${Math.round(P.top * 100)}%</text><text x="4" y="${Y(P.rel * VC) + 4}" font-size="11" fill="${css("--low")}">${Math.round(P.rel * 100)}%</text>`;
   svg.innerHTML = s;
 }
-window.addEventListener("resize", () => { drawSpec($("cvA"), RA, $("playerA")); drawSpec($("cvB"), RB, $("playerB")); });
+window.addEventListener("resize", () => { VA.later(); VB.later(); });
 </script></body></html>
