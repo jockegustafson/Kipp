@@ -1,9 +1,10 @@
 """Kipp: audible in-breaths and disfluent breaths in Swedish speech.
   det = BreathDetector()                                    # cuda, mps or cpu, whichever is there
   det.detect_file("interview.wav", words, channel=0)        # words: [(word, start, end)] of ONE speaker, or None (Silero VAD)
-  -> [{"s", "e", "label": "in" | "disfluent" (| "out" with keep_out=True), "p", "pause": "pause" | "turnend" | "prestart", "db", "cls"}]
+  -> [{"s", "e", "label": "in" | "disfluent" (| "out" with keep_out=True), "p", "pause": "pause" | "turnend" | "prestart", "db", "cls", "vol"}]
 Breath types: label in / disfluent / out; cls = the breath-token class: S / M / L (< 0.30 s, 0.30-0.55 s, longer) x soft / loud (below /
-above this recording's median breath level), "disfl" or "out". Out-breaths are found by the model but were counted as "none" when it
+above this recording's median breath level), "disfl" or "out"; vol = the breath's relative air (kipp.volume: 1 = a 0.40 s breath at the
+median level). Out-breaths are found by the model but were counted as "none" when it
 was trained (TTS needs in-breaths), so they are off by default and their recall is lower."""
 import hashlib
 import io
@@ -65,7 +66,8 @@ class BreathDetector:
             c = (c / max(1e-4, float(np.abs(c).max())) * 0.9).astype(np.float32)      # peak-normalised as the training clips
             for v in events(self.probs(c), max(0.0, s - t0), e - t0, thr, keep_out):
                 out.append({"s": round(t0 + v["s"], 3), "e": round(t0 + v["e"], 3), "label": v["label"], "p": v["p"], "pause": kind})
-        return classify(x, out, words)
+        from .volume import add_volumes
+        return add_volumes(x, classify(x, out, words))
 
     def detect_window(self, x, t0, t1, thr=None):
         """the strongest in-breath in [t0, t1] (s), searched directly (not only in pauses between words): threshold `thr` (default the

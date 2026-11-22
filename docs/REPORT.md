@@ -1,6 +1,6 @@
 # Kipp: breath detection, breathing profiles and breath planning for Swedish speech
 
-Joakim Gustafson (KTH Speech, Music and Hearing) with Claude Code. Status 2026-11-19. Models: the breath detector and the lung model of
+Joakim Gustafson (KTH Speech, Music and Hearing) with Claude Code. Status 2026-11-22 (Kipp 1.3). Models: the breath detector and the lung model of
 the KTH svtx toolkit and its breathing-TTS work.
 
 ## Abstract
@@ -12,7 +12,11 @@ speech; in 5-fold cross-validation it reaches **precision 0.87 and recall 0.88**
 choosing its token class (S / M / L × soft / loud, silent). Fitted on 818k pauses and 346k breath groups from ten corpora, the
 corresponding statistical model predicts on held-out speakers whether a pause holds a breath at **AUC 0.78** (pause length alone 0.50).
 (3) A **breathing profile** from a recording (speech rate, breaths per pause, breath length and level, voiced time per breath group) and
-a one-breath **calibration** set the lung model for a new speaker.
+a one-breath **calibration** set the lung model for a new speaker. (4) Since 1.3, **how much air each breath brings in**, fitted by
+air balance over 330 hours of spontaneous Swedish conversation (the summed volumes of five consecutive breaths against the air spent
+between them; within-speaker r = 0.46 on held-out speakers, breath length alone 0.35), a hidden lung-state model that infers silent
+refills, and breath-class models fitted on the same data that the planner now uses by default (audible breath AUC 0.77; length class
+65 %, level class 60 %, majorities 50 %).
 
 ## 1. Background and related work
 
@@ -116,6 +120,74 @@ Python; on 336 cases (4 texts × 7 voices × 3 placement rules × 2 effort level
 sizes and times as the demo. The 18 voice profiles were measured with the detector on the corpora above, plus radio monologues,
 a cooking show, book readings and audiobooks.
 
+## 3.1 How much air a breath brings in (Kipp 1.3)
+
+**Why new tables.** The breath tables behind section 3 came from a speech-synthesis manifest, which drops a speaker's unusable words
+(overlap, laughter, a cap on a host's speech), and for single-channel mixes the detector had only been run on pauses inside one manifest
+segment: podcasts and broadcast programmes showed 6–10 detected breaths per minute of speech against 19 in face-to-face dialogue. For 1.3 the
+tables were rebuilt from complete own-word timelines (every word the speaker said, usable or not) with every own pause through the detector.
+The detector was run in padded batches with an attention mask, which gives the same breaths as one clip at a time (471 of 471 on a check
+set), and earlier detections of the same clip were reused.
+
+**Data.** 30 corpora of spontaneous Swedish conversation: face-to-face and remote-call dialogue, a podcast host's own track, radio
+interviews, panel and talk shows, podcasts, and a three-party quiz game (read and scripted speech left out). Per corpus, up to 12 hours of
+the speakers' own speech, speaker files ranked by their speech in long same-speaker stretches (at least 20 s with no own pause over 3 s and
+no more than 1 s of other speech in a pause), at most 1.5 h per speaker: about 330 hours, 969 speaker files. Breath rates are now 11–16
+per minute of speech in the podcasts and broadcast corpora.
+
+**Air balance.** Over K consecutive breath cycles of one speaker the air breathed in must match the air spent in speech, so a volume model
+can be fitted without a spirometer:
+
+    log V_b = log s_speaker + a log t_b + c level_b + spectrum terms        (t = breath length, level re the speaker's speech)
+    S_w = sum over the speech of the window of (voiced phone time + w x voiceless phone time) x 10^(k dB / 10)
+    fit: within-speaker deviations of log sum_b V_b - log S_w, over windows of K detected breaths inside one stretch
+
+The speaker scale s (lung size, microphone, units) is free, so volumes are relative. Planning noise (how much of a breath a speaker uses
+before the next) averages out over K cycles, which a test on the next breath group alone cannot do. 15,850 non-overlapping windows of 5
+breaths from 521 speakers; 5 folds by speaker; within-speaker r on held-out speakers:
+
+| Breath measures | K = 1 | K = 3 | K = 5 | K = 8 |
+| --- | --- | --- | --- | --- |
+| length | 0.16 | 0.32 | 0.35 | 0.35 |
+| length + level | 0.16 | 0.34 | 0.39 | 0.41 |
+| length + level + spectrum (centre of gravity, 2–8 kHz tilt, flatness) | 0.17 | 0.38 | 0.43 | 0.45 |
+| all (+ level re the pause's noise floor, disfluent) | 0.17 | 0.40 | **0.46** | 0.48 |
+
+The best air cost has voiceless time costing w = 3 times voiced time and k = 0.1 per dB of speech level (louder speech costs more air).
+The fitted volume grows as t^0.54: longer breaths bring in more air, but more slowly. At the same length, 10 dB louder means about 18 %
+more air, so the level is a weak cue to the inhale speed (consistent with turbulent noise power growing steeply with flow). A disfluent
+breath brings in about a quarter of an in-breath's air. Per corpus the within-speaker r is 0.42–0.58, except four podcast-like sets
+(0.31 and below; one near zero), which suggests edited audio or difficult mixes there.
+
+## 3.2 The hidden lung state and silent refills
+
+A discrete state-space model per speaker file (forward–backward over 81 volume steps, in units of the speaker's median breath-cycle air):
+speech drains the volume by its air cost, a detected breath refills it by the balance model, a pause without a detected breath refills
+with a probability that grows with its length (sigmoid(g0 + g1 log pause); a silent or missed breath of a learned size), a long pause
+relaxes the volume towards rest, and going below the floor is penalised. EM on training speakers, 5 folds by speaker. Fitted: g0 = 0.04,
+g1 = 0.89, so about half of the breathless 1-second pauses hold a silent refill, of about 1.4 breath cycles of air. With a quarter of the
+detected breaths hidden, the model finds them at AUC 0.665 (pause length alone 0.615), but it cannot tell their size (Spearman 0.05–0.08).
+The inferred volume at the end of a stretch of speech does not predict creak there beyond the stretch's position (AUC 0.602 with and
+without it; 352,070 stretches); see the Knarr report.
+
+## 3.3 A breath planner fitted on data
+
+From what a synthesiser knows before it speaks (the air of the breath group ahead and to the end of the stretch, the air spent since the
+last breath and the time since it, the pause, the speech level before and after, the speech rate, a filler before the pause), three small
+nets with one hidden layer (24 ReLU units; boosted trees reach the same) were fitted on the 1.3 tables, 5 folds by speaker:
+
+| Decision | Held-out result | Baseline |
+| --- | --- | --- |
+| audible in-breath at a pause (423,197 pauses, 48 % with one) | AUC 0.77 | pause length alone 0.62 |
+| its length class S / M / L (233,629 breaths) | 65 % | majority 50 % (section 3's planner: 68 % vs 54 %) |
+| its level class soft / loud | 60 % | majority 50 % (section 3's planner: 60 % vs 50 %) |
+
+`kipp.lung.plan(..., sizing="data")`, now the default, keeps the rule planner's places and refill sizes, and takes each breath's class from
+these models; a refill at a comma or phrase boundary is silent when P(audible | refill) < 0.5, with P(audible | refill) = P(audible) /
+(P(audible) + (1 − P(audible)) × P(silent refill)). The breath's length is its class's median (0.24 / 0.40 / 0.68 s). `sizing="rule"`
+gives the demo page's rules unchanged, and the parity test uses it. The detector now also reports each breath's relative volume
+(`kipp.volume`; 1 = a 0.40 s in-breath at the corpora's median level).
+
 ## 4. Breathing profiles and calibration
 
 A profile is measured from a recording as the voice profiles were: speech rate (syllables per second of speech), the share of
@@ -137,13 +209,16 @@ the planner fit a speaker, not lung-function measurements: vital capacity cannot
 - One listener's labels, 464 pauses; precision and recall are cross-validated over clips, not a held-out test of new speakers.
 - Out-breaths are weak (counted as none in training).
 - The lung model is an air budget, not physiology: there is no plethysmography in the data, and the 0.11 l/s unit, the capacities and
-  the volume limits come from the literature, not from these speakers.
+  the volume limits come from the literature, not from these speakers. The air-balance volumes of 1.3 are relative and explain under half
+  of the balance's variance; a dialogue corpus with respiration-belt signals is the next test.
+- Silent refills are inferred, not heard: the hidden-state model finds hidden breaths only somewhat better than pause length.
 - Profiles without word times are estimates; edited recordings (podcasts, broadcast) often have breaths removed or pauses shortened.
 
 ## 6. Reproduction
 
 Detector training and the lung-model fits are in the KTH svtx repository (`tts/breath/`, `lung_table.py`, `lung_fit.py`; TTS dialogue
-report sections 17–23). This package holds the inference code, the detector weights (hash-checked), the 18 voice profiles, the planner
+report sections 17–23); the 1.3 tables, air balance, hidden-state model and planner fits (`lung3_tables.py`, `lung3_balance.py`,
+`lung3_hmm.py`, `lung3_planner.py`) are kept with the lab's non-public analysis code, as the corpora are not redistributable. This package holds the inference code, the detector weights (hash-checked), the 18 voice profiles, the planner
 and its parity test against the demo (`tools/`).
 
 ## References

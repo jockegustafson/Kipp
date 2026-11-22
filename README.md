@@ -12,14 +12,15 @@ kipp interview.wav -o breaths.tsv                          # no words: Silero VA
 ```
 
 ```
-start    end      label      p      class   level_db  pause
+start    end      label      p      class   level_db  pause  volume
 ```
 
 **Breath types.** `label` is `in` (in-breath) or `disfluent` (a breath inside a hesitation), and with `--keep-out` also `out`
 (out-breath; the model was trained with out-breaths counted as none, so expect lower recall for them). `class` is the breath-token class
 used for speech synthesis: S / M / L (shorter than 0.30 s, 0.30–0.55 s, longer) × soft / loud (below or above this recording's median
 breath level, out-breaths left out), `disfl` or `out`; `pause` says where the breath sat: between two words (`pause`), after the last word of a
-turn (`turnend`) or before the first word of the next one (`prestart`).
+turn (`turnend`) or before the first word of the next one (`prestart`). `volume` is the breath's relative air (1 = a 0.40 s in-breath at a typical level;
+see the lung model below).
 
 ## Run it from Python
 
@@ -55,8 +56,14 @@ print(to_text(words)); sim = simulate(words, P)   # estimated word and breath ti
   end or other punctuation, before a conjunction, filler or cue word (`place="phrase"`, the default; `"punct"` or `"any"` otherwise), and
   always where an effort marker (`[låg]`, `[mellan]`, `[hög]`) changes the effort. It is taken when the stretch to the next possible
   breath would go below the lowest volume, or at a sentence end when the next sentence would, and sized to what follows.
-- **Classes:** the same breath tokens the detector gives: S / M / L by inhale time, soft / loud by effort, flow and size, and
-  `silent` for a small refill at a comma or phrase boundary when the voice breathes audibly in under half of its pauses.
+- **Classes (1.3):** the same breath tokens the detector gives, S / M / L × soft / loud or `silent`, now chosen by models fitted on
+  330 hours of Swedish conversation (`sizing="data"`, the default): whether the refill is audible, from the air spent since the last
+  breath, the pause and the speech ahead (AUC 0.77 on held-out speakers), and the length and level class from the air of the breath
+  group, the speech level and rate. `sizing="rule"` (`kipp-plan --sizing rule`) keeps the demo page's rules: S / M / L by inhale time,
+  soft / loud by effort, flow and size, and `silent` for a small refill when the voice breathes audibly in under half of its pauses.
+- **How much air a breath brings in (1.3):** `kipp.volume.breath_volume(dur, db)` gives a breath's relative air, fitted by air balance
+  (the summed volumes of five breaths against the air spent between them): about t^0.54, 18 % more per 10 dB louder, a disfluent breath
+  about a quarter. The detector adds it to every breath (`vol`, the `volume` column).
 - **Voices:** 18 profiles measured with the detector on Swedish corpora (podcast, remote-call and face-to-face dialogue, radio
   interviews and monologue, parliament speech, a cooking show, book readings, audiobooks): speech rate, share of pauses with an audible
   breath, median breath length and level, and voiced seconds per breath group. They set the defaults, as the demo's sliders do:
@@ -117,7 +124,8 @@ data.
 ## Report
 
 [docs/REPORT.md](docs/REPORT.md): related work with references, the training data, the detector's listening rounds and
-results, the lung model and its fit on ten corpora, profiles and calibration, and the limitations.
+results, the lung model and its fit on ten corpora, the 1.3 air balance, hidden lung state and fitted planner (330 hours of
+spontaneous Swedish conversation), profiles and calibration, and the limitations.
 
 ## Licence
 

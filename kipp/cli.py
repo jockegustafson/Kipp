@@ -2,7 +2,7 @@
 
 WORDS: the words of ONE speaker (a breath is looked for in the pauses between them), as a Praat TextGrid (the first interval tier, or
 --tier NAME) or a TSV/CSV with a header naming start, end and word (or without a header: start, end, word). Without WORDS, Silero VAD
-finds the speech (pip install "kipp[vad]"). Writes TSV: start, end, label, p, class, level_db, pause."""
+finds the speech (pip install "kipp[vad]"). Writes TSV: start, end, label, p, class, level_db, pause, volume (relative air, kipp.volume)."""
 import argparse
 import csv
 import json
@@ -39,8 +39,8 @@ def main():
     from . import BreathDetector
     res = BreathDetector(a.device).detect_file(a.audio, read_words(a.words, a.tier) if a.words else None, channel=a.channel, thr=a.thr, keep_out=a.keep_out)
     f = open(a.out, "w", newline="") if a.out else sys.stdout; w = csv.writer(f, delimiter="\t")
-    w.writerow(["start", "end", "label", "p", "class", "level_db", "pause"])
-    for b in res: w.writerow([f'{b["s"]:.3f}', f'{b["e"]:.3f}', b["label"], b["p"], b["cls"], b["db"], b["pause"]])
+    w.writerow(["start", "end", "label", "p", "class", "level_db", "pause", "volume"])
+    for b in res: w.writerow([f'{b["s"]:.3f}', f'{b["e"]:.3f}', b["label"], b["p"], b["cls"], b["db"], b["pause"], "" if b.get("vol") is None else b["vol"]])
     if a.json: json.dump(res, open(a.json, "w"), indent=1)
 
 

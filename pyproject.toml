@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kipp"
-version = "1.2.1"
+version = "1.3.0"
 description = "Kipp: breaths in Swedish speech (detector) and where a speaker breathes in a text (lung model)"
 readme = "README.md"
 requires-python = ">=3.9"

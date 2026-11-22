@@ -11,6 +11,12 @@ next likely breath, plus a margin). Breath-token class: S / M / L from the inhal
 loud when the effort or the flow is high or the breath is large, else soft; a small refill (< 0.22 l) at a comma or phrase boundary is
 a silent breath when the voice allows it (it breathes audibly in under half of its pauses).
 
+Sizing (Kipp 1.3): with sizing="data" (the default) the places of the breaths are as above, but each breath's class comes from models fitted
+on 330 h of Swedish conversation (kipp.volume): an AUDIBLE breath or a silent one from the air spent since the last breath, the time since
+it, the pause and the speech ahead (held-out AUC 0.77), and the length class S / M / L and soft / loud from the air of the breath group it
+starts, the air spent before it, the pause, the speech level (from the effort) and the speech rate (a refill is silent when P(audible | refill) < 0.5); the breath's length is its class's median
+(0.24 / 0.40 / 0.68 s). sizing="rule" gives the demo page's rules unchanged (the parity tests use it).
+
   from kipp.lung import plan, simulate, voice_params, VOICES, to_text
   P = voice_params("v04")                          # one of the measured voices (VOICES), or voice_params(None) for a generic one
   words = plan("Först skär du löken. Sedan steker du den i smör, och sen häller du i grädden.", P)
@@ -66,7 +72,8 @@ def pause_after(p): return 0.18 if p == "," else 0.38 if p in (".", "!", "?") el
 def voice_params(voice=None, **over):
     """the page's settings for a voice (its slider defaults; voiceChanged), any of them overridable:
     vc (vital capacity, l), start / rel / top (start, lowest and highest volume, share of vc), flow (inhale l/s), eff (effort), vl (cost of
-    voiceless sounds), rate (syllables / s), plan, first (a breath before the text), silent_ok, place ("punct" | "phrase" | "any")"""
+    voiceless sounds), rate (syllables / s), plan, first (a breath before the text), silent_ok, place ("punct" | "phrase" | "any"),
+    sizing ("data": classes from the fitted models of kipp.volume; "rule": the demo page's rules)"""
     v = VOICES.get(voice, {}) if isinstance(voice, str) else (voice or {})
     clamp = lambda x, a, b: min(b, max(a, x))  # noqa: E731
     vc = 4.8 if v.get("gender", "m") == "m" else 3.6; grp = (v.get("group_phon") or 3.5) * PHON_FLOW
@@ -74,7 +81,7 @@ def voice_params(voice=None, **over):
          "top": _snap("top", round(clamp(35 + 130 * grp / vc, 40, 95))) / 100,
          "flow": _snap("flow", float(f"{clamp(grp / max(0.15, v.get('breath_s', 0.4)), 0.3, 3):.2f}")),
          "silent_ok": v.get("breath_rate", 0.5) < 0.5, "start": _snap("start", 55) / 100, "eff": 1.0, "vl": 2.5,
-         "plan": True, "first": True, "place": "phrase"}
+         "plan": True, "first": True, "place": "phrase", "sizing": "data"}
     P.update(over); return P
 
 
@@ -151,7 +158,35 @@ def plan(text, P=None):
                     words[i]["bdur"] = max(0.12, dur * 0.6) if words[i]["br"] == "silent" else dur
                     V = target
         V -= words[i]["air"]
+    if P.get("sizing", "data") == "data": _data_classes(words, cands, P)
     return words
+
+
+EFF_LEVEL = {"low": 0.75, "mid": 1.0, "high": 1.5}
+
+
+def _data_classes(words, cands, P):
+    """re-class the planned breaths with kipp.volume's fitted models (places and refill sizes unchanged)"""
+    from .volume import KDB, V3, WU, breath_class, p_audible, p_audible_given_refill
+    import math
+    eff = lambda o: EFF_LEVEL.get(o.get("eff"), P["eff"])  # noqa: E731
+    dbo = lambda o: 20 * math.log10(eff(o))  # noqa: E731
+    dair = [o["dur"] * ((1 - o["vl"]) + WU * o["vl"]) * 10 ** (KDB * dbo(o) / 10) for o in words]
+    B = [i for i, o in enumerate(words) if o.get("br")]
+    for n, i in enumerate(B):
+        prev = B[n - 1] if n else 0; nxt = B[n + 1] if n + 1 < len(B) else len(words)
+        spent = sum(dair[prev:i]) if n else 0.0; tsince = sum(o["dur"] for o in words[prev:i]) if n else 0.0
+        pause = pause_after(punct_of(words[i - 1]["w"])) if i else 0.5; pause = pause or 0.05
+        stop = next((j for j in range(i + 1, len(words)) if punct_of(words[j - 1]["w"])), len(words))
+        kind = cands[i] or "sentence"; w = words[i]; td = V3["typical_db"]
+        db = td["ipu"] + dbo(w); dbp = td["ipu_last_0.5s"] + (dbo(words[i - 1]) if i else dbo(w))
+        if kind in ("punct", "phrase") and not w["eff_change"]:
+            pa = p_audible_given_refill(p_audible(spent, tsince, pause, sum(dair[i:stop]), sum(dair[i:]),
+                                                  bool(i) and words[i - 1].get("filler", False), db, dbp), pause)
+            if pa < 0.5:
+                w["br"] = "silent"; w["bdur"] = max(0.12, 0.6 * w.get("bdur", 0.2)); w["p_audible"] = round(pa, 3); continue
+        cls, dur = breath_class(sum(dair[i:nxt]), spent, pause, kind == "start" or not n, db, dbp, P["rate"])
+        w["br"] = cls; w["bdur"] = dur
 
 
 def simulate(words, P):
@@ -178,6 +213,7 @@ def main(argv=None):
     ap.add_argument("text"); ap.add_argument("--voice", help=f"one of {', '.join(VOICES)} (default: a generic voice)")
     ap.add_argument("--place", default="phrase", choices=["phrase", "punct", "any"]); ap.add_argument("--effort", type=float)
     ap.add_argument("--json", action="store_true")
-    a = ap.parse_args(argv); P = voice_params(a.voice, place=a.place, **({"eff": a.effort} if a.effort else {}))
+    ap.add_argument("--sizing", default="data", choices=["data", "rule"], help="breath classes from the fitted models (data) or the demo's rules")
+    a = ap.parse_args(argv); P = voice_params(a.voice, place=a.place, sizing=a.sizing, **({"eff": a.effort} if a.effort else {}))
     w = plan(a.text, P)
     print(json.dumps(w, ensure_ascii=False, indent=1) if a.json else to_text(w))
