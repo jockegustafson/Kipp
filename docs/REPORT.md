@@ -188,6 +188,28 @@ these models; a refill at a comma or phrase boundary is silent when P(audible | 
 gives the demo page's rules unchanged, and the parity test uses it. The detector now also reports each breath's relative volume
 (`kipp.volume`; 1 = a 0.40 s in-breath at the corpora's median level).
 
+## 3.4 Checked against respiration belts (2026-11-25)
+
+BinD (Science Tokyo Multimodal Dialogue Corpus with Respiration Signals; Funakoshi 2025, NII IDR, doi 10.32130/rdata.11.1): 72 Japanese speakers in 36 pairs with elastic chest and abdominal belts, two sessions per pair in separate sound-proof booths with a table microphone each (139 speaker files, ~36 h) and two face to
+face with one shared microphone. The belt falls on inhalation; its minimum is 0.11 s before the speech onsets in 140 of 144 booth files
+(the per-participant audio files are offset against the belts; the session's stereo file is not). Belt inhalations: band-pass
+0.05–1.5 Hz, trough to peak, ≥ 15 % of the file's range, 13–20 per minute. Speech from Silero VAD (no transcripts).
+
+- **Where people breathe:** 32 % of the inhalations in pauses of 0.25–3 s, 45 % in longer gaps (listening), 17.5 % inside what the VAD
+  calls speech (full-depth breaths; 28 % of them contain a 0.05–0.25 s gap). The lungs are fullest 0.21 s (median) before speech resumes.
+- **The detector:** precision 0.87 (what it hears is a real inhalation), but with table microphones it hears only 27 % of the inhalations
+  in pauses (43 % of the deepest quarter, 14 % of the shallowest; per speaker 14–52 %). With one shared microphone face to face: 17 %
+  and 0.82, and a breath heard in one speaker's pause is the partner's alone in 14 % of cases (both partners inhale in 60 %).
+- **Silent refills:** P(an inhalation | a quiet pause) = sigmoid(−0.25 + 1.93 log pause): 0.17 at 0.5 s, 0.44 at 1 s, 0.75 at 2 s, steeper
+  than the EM estimate of section 3.2 (0.35 / 0.50 / 0.65). With the measured curve the hidden state finds hidden breaths equally well
+  (AUC 0.662 vs 0.665), so the shipped weights are unchanged. Silent inhalations are about 0.74 × as deep as heard ones.
+- **Breath size:** the section 3.1 volume (unchanged, on Japanese) correlates r 0.23 within speaker with the belt depth (0.25 with chest +
+  abdomen); breath level is the best single cue (0.21), length 0.15.
+- **Air balance:** the belt depth itself does not follow the air spent between breaths (r ≈ 0.0–0.07 over 1–5 breaths), and the chest's
+  drop during speech grows only weakly with its length (r 0.17): breath by breath the belt is too noisy a volume measure to confirm the
+  balance. The Swedish balance is not a recording-level artefact: with no level anywhere it keeps r 0.446 at K = 5 (0.457 as fitted), with
+  levels re the window's own speech 0.473.
+
 ## 4. Breathing profiles and calibration
 
 A profile is measured from a recording as the voice profiles were: speech rate (syllables per second of speech), the share of
@@ -205,6 +227,8 @@ of capacity, they set the model's capacity, and the deep breath's length the ful
 the planner fit a speaker, not lung-function measurements: vital capacity cannot be heard.
 
 ## 5. Limitations
+
+- Measured against respiration belts (section 3.4), the detector misses most quiet breaths with distant microphones; breath rates and breath tables from such recordings undercount, and breaths heard in a shared microphone cannot be given to one speaker.
 
 - One listener's labels, 464 pauses; precision and recall are cross-validated over clips, not a held-out test of new speakers.
 - Out-breaths are weak (counted as none in training).
